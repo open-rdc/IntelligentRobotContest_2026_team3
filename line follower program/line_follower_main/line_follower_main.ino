@@ -1,37 +1,382 @@
-int TH0 = 400, TH1 = 210, TH2 = 200, TH3 = 200, TH4 = 400, TH5 = 400, TH6 = 210, TH7 = 210; //しきい値
-int leftPIN_F  = 4;   //左モータ 正転
-int leftPIN_B  = 5;   //左モータ 逆転
-int rightPIN_F = 8;  //右モータ 正転
-int rightPIN_B = 9;   //右モータ 逆転
+#include <Servo.h>
+
+int TH[]       = {400, 210, 200, 200, 400, 400, 210, 210}; //しきい値
+int kTH        = 400;   //距離センサのしきい値
+int KS         = 0;     //距離センサの読み取り回数
+int leftPIN_F  = 4;     //左モータ 正転
+int leftPIN_B  = 5;     //左モータ 逆転
+int rightPIN_F = 8;     //右モータ 正転
+int rightPIN_B = 9;     //右モータ 逆転
 int speedValue = 255;
-int leftlast   = -1;  //左側の最終入力
-int rightlast  = -1;  //右側の最終入力
-int kousa      = -1;  //交差点を通った回数
-int i = 0;            //終端の交差点を通った回数
-bool lock = false;    //黒線かどうか
-float LD;             //左デューティ比
-float RD;             //右デューティ比
+int last       = -1;    //最終入力
+int kousa      = -1;    //交差点を通った回数
+int i          = 0;     //終端の交差点を通った回数
+int mode       = 0;
+int sensorValueA0, sensorValueA1, sensorValueA2, sensorValueA3, sensorValueA4, sensorValueA5, sensorValueA6, sensorValueA7;
+int roller;
+int servoPin = 7;       //信号線を繋いだピン番号
+bool lock      = false; //黒線かどうか
+float LD;               //左デューティ比
+float RD;               //右デューティ比
+unsigned long startTime = millis(); // 走り始めの時間を記録
+
+Servo myServo;
+
+void runTrace() {
+  if (TH[1] < sensorValueA1 && TH[5] < sensorValueA5){
+    //ロック(複数回読み取り防止)
+    if (lock == false){
+      kousa++;
+      lock = true;
+      digitalWrite(13, HIGH);
+    }
+    LD = 0.3;
+    RD = 0.3;
+  }
+  else if (TH[0] < sensorValueA0){
+    LD = 0.25;
+    RD = -0.1;
+    last = 0;
+  }
+  else if (TH[1] < sensorValueA1){
+    LD = 0.4;
+    RD = -0.35;
+    last = 1;
+  }
+  else if (TH[2] < sensorValueA2){
+    LD = 0.3;
+    RD = -0.3;
+    last = 1;
+  }
+  else if (TH[3] < sensorValueA3){
+    LD = 0.25;
+    RD = -0.4;
+    last = 1;
+  }
+  else if (TH[4] < sensorValueA4){
+    LD = -0.1;
+    RD = 0.25;
+    last = 0;
+  }
+  else if (TH[5] < sensorValueA5){
+    LD = -0.35;
+    RD = 0.4;
+    last = 2;
+  }
+  else if (TH[6] < sensorValueA6){
+    LD = -0.3;
+    RD = 0.3;
+    last = 2;
+  }
+  else if (TH[7] < sensorValueA7){
+    LD = -0.4;
+    RD = 0.25;
+    last = 2;
+  }
+  else if (TH[1] > sensorValueA1 && TH[5] > sensorValueA5){
+    //ロック解除
+    lock = false;
+    digitalWrite(13, LOW);
+  }
+}
+
+void leftTurn(){
+  unsigned long startTime = millis();
+  unsigned long currentTime;
+
+  do{
+    unsigned long currentTime = millis() - startTime;
+    analogWrite(leftPIN_F, 0);
+    analogWrite(leftPIN_B, speedValue * 0.3);
+    analogWrite(rightPIN_F, speedValue * 0.3);
+    analogWrite(rightPIN_B, 0);
+  }while(currentTime > 0 && currentTime < 3000);
+}
+
+void rightTurn(){
+  unsigned long startTime = millis();
+  unsigned long currentTime;
+
+  do{
+    unsigned long currentTime = millis() - startTime;
+    analogWrite(leftPIN_F, speedValue * 0.3);
+    analogWrite(leftPIN_B, 0);
+    analogWrite(rightPIN_F, 0);
+    analogWrite(rightPIN_B, speedValue * 0.3);
+  }while(currentTime > 0 && currentTime < 3000);
+}
+
+void runTurn() {
+    //その場で180°回転
+    analogWrite(leftPIN_F, speedValue * 0.3);
+    analogWrite(leftPIN_B, 0);
+    analogWrite(rightPIN_F, 0);
+    analogWrite(rightPIN_B, speedValue * 0.3);
+    delay (300);
+
+    while (analogRead(A7) < TH[7]){
+      analogWrite(leftPIN_F, speedValue * 0.3);
+      analogWrite(leftPIN_B, 0);
+      analogWrite(rightPIN_F, 0);
+      analogWrite(rightPIN_B, speedValue * 0.3);
+    }
+    kousa = 0;
+}
+
+void runSearch() {
+  if (last == 0){
+    LD = -0.3; //最後の入力が中央：左出力-30% 右出力40％
+    RD = 0.4;
+  }
+  else if (last == 1){
+    LD = 0.5;//最後の入力が右側：左出力50％
+    RD = 0.0; 
+  }
+  else if (last == 2){
+    LD = 0.0;//最後の入力が左側：右出力50%
+    RD = 0.5; 
+  }
+  else{
+    LD = 0.3;
+    RD = 0.3;
+  }
+}
+
+void ballSearch() {
+  unsigned long currentTime;
+  analogWrite(roller, 255);
+
+  unsigned long startTime = millis();
+  do{
+    unsigned long currentTime = millis() - startTime;
+    rightTurn();
+  }while(currentTime > 0 && currentTime < 3000);
+
+  startTime = millis();
+  do{
+    unsigned long currentTime = millis() - startTime;
+    analogWrite(leftPIN_F, speedValue * 0.3);
+    analogWrite(leftPIN_B, 0);
+    analogWrite(rightPIN_F, speedValue * 0.3);
+    analogWrite(rightPIN_B, 0);
+  }while(currentTime > 0 && currentTime < 1000);
+
+  startTime = millis();
+  do{
+    unsigned long currentTime = millis() - startTime;
+    leftTurn();
+  }while(currentTime > 0 && currentTime < 3000);
+
+  startTime = millis();
+  do{
+    unsigned long currentTime = millis() - startTime;
+    analogWrite(leftPIN_F, speedValue * 0.3);
+    analogWrite(leftPIN_B, 0);
+    analogWrite(rightPIN_F, speedValue * 0.3);
+    analogWrite(rightPIN_B, 0);
+  }while(currentTime > 0 && currentTime < 5000);
+
+  startTime = millis();
+  do{
+    unsigned long currentTime = millis() - startTime;
+    leftTurn();
+  }while(currentTime > 0 && currentTime < 3000);
+
+  startTime = millis();
+  do{
+    unsigned long currentTime = millis() - startTime;
+    analogWrite(leftPIN_F, speedValue * 0.3);
+    analogWrite(leftPIN_B, 0);
+    analogWrite(rightPIN_F, speedValue * 0.3);
+    analogWrite(rightPIN_B, 0);
+  }while(currentTime > 0 && currentTime < 3000);
+
+  startTime = millis();
+  do{
+    unsigned long currentTime = millis() - startTime;
+    leftTurn();
+  }while(currentTime > 0 && currentTime < 3000);
+
+  startTime = millis();
+  do{
+    unsigned long currentTime = millis() - startTime;
+    analogWrite(leftPIN_F, speedValue * 0.3);
+    analogWrite(leftPIN_B, 0);
+    analogWrite(rightPIN_F, speedValue * 0.3);
+    analogWrite(rightPIN_B, 0);
+  }while(currentTime > 0 && currentTime < 5000);
+
+  startTime = millis();
+  do{
+    unsigned long currentTime = millis() - startTime;
+    leftTurn();
+  }while(currentTime > 0 && currentTime < 3000);
+
+  startTime = millis();
+  do{
+    unsigned long currentTime = millis() - startTime;
+    analogWrite(leftPIN_F, speedValue * 0.3);
+    analogWrite(leftPIN_B, 0);
+    analogWrite(rightPIN_F, speedValue * 0.3);
+    analogWrite(rightPIN_B, 0);
+  }while(currentTime > 0 && currentTime < 1000);
+
+  startTime = millis();
+  do{
+    unsigned long currentTime = millis() - startTime;
+    rightTurn();
+  }while(currentTime > 0 && currentTime < 3000);
+}
+
+void servo() {
+  // 0度へ移動
+  myServo.write(0);
+  delay(1000); // 1秒待機
+
+  // 90度へ移動
+  myServo.write(50);
+  delay(1000); // 1秒待機
+}
+
+void haisyutu(){
+  if (KS == -1){
+    if (/*カラーセンサが赤*/){
+      servo();
+    }
+    else if (/*カラーセンサが黄色*/){
+      while (true){
+        LD = -0.3;
+        RD = -0.3;
+
+        if (KS == 1){
+          break;
+        }
+      }
+      servo();
+    }
+    else if (/*カラーセンサが青*/){
+      while (true){
+        LD = -0.3;
+        RD = -0.3;
+
+        if (KS == 3){
+          break;
+        }
+      }
+      servo();
+    }
+  }
+  else if (KS == 0){
+    if (/*カラーセンサが赤*/){
+      while (true){
+        LD = 0.3;
+        RD = 0.3;
+
+        if (KS == -1){
+          break;
+        }
+      }
+      servo();      
+    }
+    else if (/*カラーセンサが黄色*/){
+      while (true){
+        LD = -0.3;
+        RD = -0.3;
+
+        if (KS == 1){
+          break;
+        }
+      }
+      servo();
+    }
+    else if (/*カラーセンサが青*/){
+      while (true){
+        LD = -0.3;
+        RD = -0.3;
+
+        if (KS == 3){
+          break;
+        }
+      }
+      servo();
+    }
+  }
+  else if (KS == 1){
+    if (/*カラーセンサが赤*/){
+      while (true){
+        LD = 0.3;
+        RD = 0.3;
+
+        if (KS == -1){
+          break;
+        }
+      }
+      servo();      
+    }
+    else if (/*カラーセンサが黄色*/){
+      servo();
+    }
+    else if (/*カラーセンサが青*/){
+      while (true){
+        LD = -0.3;
+        RD = -0.3;
+
+        if (KS == 3){
+          break;
+        }
+      }
+      servo();
+    }
+  }
+  else if (KS == 3){
+    if (/*カラーセンサが赤*/){
+      while (true){
+        LD = 0.3;
+        RD = 0.3;
+
+        if (KS == -1){
+          break;
+        }
+      }
+      servo();       
+    }
+    else if (/*カラーセンサが黄色*/){
+      while (true){
+        LD = 0.3;
+        RD = 0.3;
+
+        if (KS == 1){
+          break;
+        }
+      }
+      servo();
+    }
+    else if (/*カラーセンサが青*/){
+      servo();
+    }
+  }
+}
 
 void setup() {
   pinMode(13, OUTPUT);
-  
   pinMode(leftPIN_F, OUTPUT);
   pinMode(leftPIN_B, OUTPUT);
   pinMode(rightPIN_F, OUTPUT);
   pinMode(rightPIN_B, OUTPUT);
 
+  myServo.attach(servoPin, 500, 2500);
   Serial.begin(9600);
 }
 
 void loop() {
-  int sensorValueA0 = analogRead(A12); //右1 中央
-  int sensorValueA1 = analogRead(A13); //右2
-  int sensorValueA2 = analogRead(A14); //右3
-  int sensorValueA3 = analogRead(A15); //右4 端
-  int sensorValueA4 = analogRead(A11); //左1 中央
-  int sensorValueA5 = analogRead(A10); //左2
-  int sensorValueA6 = analogRead(A9); //左3
-  int sensorValueA7 = analogRead(A8); //左4 端
+  sensorValueA0 = analogRead(A12); //右1 中央
+  sensorValueA1 = analogRead(A13); //右2
+  sensorValueA2 = analogRead(A14); //右3
+  sensorValueA3 = analogRead(A15); //右4 端
+  sensorValueA4 = analogRead(A11); //左1 中央
+  sensorValueA5 = analogRead(A10); //左2
+  sensorValueA6 = analogRead(A9); //左3
+  sensorValueA7 = analogRead(A8); //左4 端
   Serial.print(sensorValueA0);
   Serial.print(", ");
   Serial.print(sensorValueA1);
@@ -48,165 +393,55 @@ void loop() {
   Serial.print(", ");
   Serial.println(sensorValueA7);
 
-  if (kousa == 4){ //四つ目の交差点の時
-    i++;
-    
-    if (i % 2 == 0){
-      //その場で180°回転
-      analogWrite(leftPIN_F, speedValue * 0.3);
-      analogWrite(leftPIN_B, 0);
-      analogWrite(rightPIN_F, 0);
-      analogWrite(rightPIN_B, speedValue * 0.3);
-      delay (300);
-
-      while (analogRead(A7) < TH7){
-        analogWrite(leftPIN_F, speedValue * 0.3);
-        analogWrite(leftPIN_B, 0);
-        analogWrite(rightPIN_F, 0);
-        analogWrite(rightPIN_B, speedValue * 0.3);
-      }
-      kousa = 0;
-    }
-    else {
-      //ライントレースを抜けてボール回収
-      kousa = 0;
-    }
+  if (LD > 0 && /*距離センサ*/ > kTH){
+    KS--;
   }
-  else{
-    //黒線を踏んでる場合
-    if (TH0 < sensorValueA0 || TH1 < sensorValueA1 || TH2 < sensorValueA2 || TH3 < sensorValueA3 || TH4 < sensorValueA4 || TH5 < sensorValueA5 || TH6 < sensorValueA6 || TH7 < sensorValueA7){
-      //---交差点---//
-      if(TH1 < sensorValueA1 && TH5 < sensorValueA5){
-        //ロック(複数回読み取り防止)
-        if (lock == false){
-          kousa++;
-          lock = true;
-          digitalWrite(13, HIGH);
+  else if (LD < 0 && /*距離センサ*/ > kTH){
+    KS++;
+  }
+
+  if (kousa == 4){
+    i++;
+    if (i / 2 == 0){
+      KS = 0;
+      while(true){
+        if (/*カラーセンサがon*/){
+          mode = 4;
+        }
+        else{
+          kousa = 1;
+          break;
         }
       }
-      
-      if (TH0 < sensorValueA0){
-        LD = 0.2;
-        RD = -0.1;
-      }
-      else if (TH1 < sensorValueA1){
-        LD = 0.3;
-        RD = -0.25;
-      }
-      else if (TH2 < sensorValueA2){
-        LD = 0.2;
-        RD = -0.2;
-      }
-      else if (TH3 < sensorValueA3){
-        LD = 0.15;
-        RD = -0.3;
-      }
-      else if (TH4 < sensorValueA4){
-        LD = -0.1;
-        RD = 0.2;
-      }
-      else if (TH5 < sensorValueA5){
-        LD = -0.25;
-        RD = 0.3;
-      }
-      else if (TH6 < sensorValueA6){
-        LD = -0.2;
-        RD = 0.2;
-      }
-      else if (TH7 < sensorValueA7){
-        LD = -0.3;
-        RD = 0.15;
-      }
-      //---左モータ---//
-      /*if (TH < sensorValueA0 && TH < sensorValueA1 && TH < sensorValueA2 && TH < sensorValueA3){
-        LD = 0.9; //右1と右2と右3と右4がON：出力90%
-        rightlast = 3;
-      }
-      else if (TH < sensorValueA0 && TH < sensorValueA1 && TH < sensorValueA2){
-        LD = 0.75; //右1と右2と右3がON：出力70%
-        rightlast = 2;
-      }
-      else if (TH < sensorValueA0 && TH < sensorValueA1){
-        LD = 0.6; //右1と右2がON：出力50%
-        rightlast = 1;
-      }
-      else if ( TH < sensorValueA3){
-        LD = 0.9; //右4のみON：出力90%
-        rightlast = 3;
-      }
-      else if ( TH < sensorValueA2){
-        LD = 0.75; //右3のみON：出力70%
-        rightlast = 2;
-      }
-      else if (TH < sensorValueA1){
-        LD = 0.6; //右2のみON：出力50%
-        rightlast = 1;
-      }
-      else if (TH < sensorValueA0){
-        LD = 0.3; //右1のみON：出力30%
-        rightlast = 0;
-      }
-      else{
-        LD = 0.15;
-      }
-
-      //---右モータ---//
-      if (TH < sensorValueA4 && TH < sensorValueA5 && TH < sensorValueA6 && TH < sensorValueA7){
-        RD = 0.9; //左1と2と左3と左4がON：出力90%
-        leftlast = 3;
-      }
-      else if (TH < sensorValueA4 && TH < sensorValueA5 && TH < sensorValueA6){
-        RD = 0.75; //左1と左2と左3がON：出力70%
-        leftlast = 2;
-      } 
-      else if (TH < sensorValueA4 && TH < sensorValueA5){
-        RD = 0.6; //左1と左2がON：出力50%
-        leftlast = 1;
-      }
-      else if (TH < sensorValueA7){
-        RD = 0.9; //左4のみON：出力90%
-        leftlast = 3;
-      }
-      else if (TH < sensorValueA6){
-        RD = 0.75; //左3のみON：出力70%
-        leftlast = 2;
-      }
-      else if (TH < sensorValueA5){
-        RD = 0.6; //左2のみON：出力50%
-        leftlast = 1;
-      }
-      else if (TH < sensorValueA4){
-        RD = 0.3; //左1のみON：出力30%
-        leftlast = 0;
-      }
-      else{
-        RD = 0.15;
-      }*/
+      mode = 1; // 4回目の交差点だから旋回モードへ
     }
-    //黒線を踏んでない場合
     else{
-      //ロック解除
-      lock = false;
-      digitalWrite(13, LOW);
-
-      //---探索---//
-      if (leftlast == 0 || rightlast == 0){
-        LD = -0.3; //最後の入力が中央：左出力-30% 右出力40％
-        RD = 0.4;
-      }
-      else if (rightlast == 1 || rightlast == 2 || rightlast == 3){
-        LD = 0.5;//最後の入力が右側：左出力50％
-        RD = 0.0; 
-      }
-      else if (leftlast == 1 || leftlast == 2 || leftlast == 3){
-        LD = 0.0;//最後の入力が左側：右出力50%
-        RD = 0.5; 
-      }
-      else{
-        LD = 0.3;
-        RD = 0.3;
-      }
+      mode = 3; // ボール探索モード
     }
+  } 
+  else if (sensorValueA0 < TH[0] || sensorValueA1 < TH[1] || sensorValueA2 < TH[2] || sensorValueA3 < TH[3] || sensorValueA4 < TH[4] || sensorValueA5 < TH[6] || sensorValueA7 < TH[7] ) {
+    mode = 2; // ライン探索モードへ
+  } 
+  else {
+    mode = 0; // 通常トレースモードへ
+  }
+
+  switch (mode) {
+    case 0: // トレース中の動き
+      runTrace();
+      break;
+    case 1: // 旋回中の動き
+      runTurn();
+      break;
+    case 2: // ライン探索中の動き
+      runSearch();
+      break;
+    case 3: // ボール探索中の動き
+      ballSearch();
+      break;
+    case 4: // 排出時の動き
+      haisyutu();
+      break;
   }
 
   //---モータ出力---//
